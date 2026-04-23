@@ -658,7 +658,8 @@ func (c *oidcConnector) createIdentity(ctx context.Context, identity connector.I
 
 		// Fallback when claims[groupsKey] is a string instead of an array of strings.
 		if g, b := claims[groupsKey].(string); b {
-			groups = []string{g}
+			// If the groups claim is a space delimited string, split it into multiple groups
+			groups = strings.Split(g, " ")
 		}
 
 		if found {
