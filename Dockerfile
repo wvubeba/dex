@@ -87,7 +87,7 @@ COPY --from=builder /usr/local/src/dex/web /srv/dex/web
 
 COPY --from=gomplate /usr/local/bin/gomplate /usr/local/bin/gomplate
 
-USER dex:dex
+USER 1001:1001
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint"]
 CMD ["dex", "serve", "/etc/dex/config.docker.yaml"]
