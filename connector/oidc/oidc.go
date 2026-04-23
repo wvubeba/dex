@@ -544,6 +544,22 @@ func (c *oidcConnector) createIdentity(ctx context.Context, identity connector.I
 		if err := idToken.Claims(&claims); err != nil {
 			return identity, fmt.Errorf("oidc: failed to decode claims: %v", err)
 		}
+
+		// Extract claims from the Access Token (e.g. for providers like Ping Federate
+		// that carry group memberships in the access token's "scope" claim)
+		if len(token.AccessToken) > 0 {
+			accToken, err := c.provider.Verifier(&oidc.Config{SkipClientIDCheck: true}).Verify(ctx, token.AccessToken)
+			if err != nil {
+				c.logger.Warn("failed to verify access token, skipping access token claim extraction", "error", err)
+			} else {
+				var claimsAT map[string]interface{}
+				if err := accToken.Claims(&claimsAT); err != nil {
+					c.logger.Warn("failed to decode access token claims", "error", err)
+				} else if scope, ok := claimsAT["scope"].(string); ok {
+					claims["scope"] = scope
+				}
+			}
+		}
 	} else if caller == exchangeCaller {
 		switch token.TokenType {
 		case "urn:ietf:params:oauth:token-type:id_token":
