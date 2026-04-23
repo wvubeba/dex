@@ -43,7 +43,7 @@ jobs:
           # Strip "-patched" suffix to get the base version
           VERSION="${BRANCH%-patched}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${VERSION}-patched" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Set image name
         id: image-name
