@@ -1,0 +1,107 @@
+name: Auto-patch new Dex releases
+
+on:
+  schedule:
+    # Check daily at 06:00 UTC
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-patch:
+    name: Check for new upstream releases
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/dexidp/dex.git || true
+          git fetch upstream --tags
+
+      - name: Find latest upstream release tag
+        id: latest
+        run: |
+          # Get the latest semver tag (vX.Y.Z, no pre-releases)
+          LATEST=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          echo "tag=${LATEST}" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream tag: ${LATEST}"
+
+      - name: Check if patched branch already exists
+        id: check
+        run: |
+          TAG="${{ steps.latest.outputs.tag }}"
+          BRANCH="${TAG#v}-patched"
+          if git rev-parse --verify "origin/${BRANCH}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Branch ${BRANCH} already exists, nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Branch ${BRANCH} does not exist, will create and patch."
+          fi
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Apply patches to new release
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          TAG="${{ steps.latest.outputs.tag }}"
+          BRANCH="${{ steps.check.outputs.branch }}"
+
+          echo "==> Creating branch ${BRANCH} from ${TAG}..."
+          git checkout -b "${BRANCH}" "${TAG}"
+
+          # Find the latest existing patched branch to cherry-pick from
+          PREV_PATCHED=$(git branch -r --list 'origin/*-patched' \
+            | sed 's|origin/||; s/^[[:space:]]*//' \
+            | sort -V | tail -1)
+
+          if [ -z "${PREV_PATCHED}" ]; then
+            echo "ERROR: No previous patched branch found to cherry-pick from."
+            exit 1
+          fi
+
+          echo "==> Previous patched branch: ${PREV_PATCHED}"
+
+          # Cherry-pick Patch 1: scope from access token
+          PATCH1=$(git log "origin/${PREV_PATCHED}" --grep='Extract "scope" claim from Access Token' --format='%H' | head -1)
+          if [ -z "${PATCH1}" ]; then
+            echo "ERROR: Could not find Patch 1 commit"
+            exit 1
+          fi
+          echo "==> Cherry-picking Patch 1: ${PATCH1:0:8}"
+          git cherry-pick "${PATCH1}"
+
+          # Cherry-pick Patch 2: space-delimited groups
+          PATCH2=$(git log "origin/${PREV_PATCHED}" --grep='Split space-delimited groups claim' --format='%H' | head -1)
+          if [ -z "${PATCH2}" ]; then
+            echo "ERROR: Could not find Patch 2 commit"
+            exit 1
+          fi
+          echo "==> Cherry-picking Patch 2: ${PATCH2:0:8}"
+          git cherry-pick "${PATCH2}"
+
+          # Cherry-pick the upgrade script if it exists
+          SCRIPT_COMMIT=$(git log "origin/${PREV_PATCHED}" --grep='Add upgrade script for applying patches' --format='%H' | head -1)
+          if [ -n "${SCRIPT_COMMIT}" ]; then
+            echo "==> Cherry-picking upgrade script: ${SCRIPT_COMMIT:0:8}"
+            git cherry-pick "${SCRIPT_COMMIT}" || true
+          fi
+
+          echo "==> Pushing ${BRANCH}..."
+          git push origin "${BRANCH}"
+
+          echo "==> Done! Branch ${BRANCH} created and pushed."
+          echo "The build-patched workflow will be triggered automatically."
